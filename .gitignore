@@ -1,0 +1,11 @@
+.settings/
+.classpath
+.project
+tmp/
+target/
+logs/
+.idea/
+counter.iml
+counter.ipr
+counter.iws
+build/

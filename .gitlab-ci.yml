@@ -1,0 +1,11 @@
+before_script:
+  - whoami
+  - pwd
+  - echo $PATH
+  - which mvn
+  - which java
+
+package:
+  script:
+    - mvn clean package
+    - mvn sonar:sonar
