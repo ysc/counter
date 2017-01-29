@@ -5,5 +5,8 @@ atomic.counter.zookeeper.prefix=/api/call/counter
 api.call.count.prefix=/api/call
 api.call.count.limit=1:1000000,2:2000000
 
+#是否异步计数
+async=false
+
 #Zookeeper超时配置
 zookeeper.connection.timeout.ms=3000

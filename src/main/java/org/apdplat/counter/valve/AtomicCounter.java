@@ -5,6 +5,7 @@ import org.apache.curator.framework.recipes.atomic.AtomicValue;
 import org.apache.curator.framework.recipes.atomic.DistributedAtomicLong;
 import org.apache.curator.retry.RetryNTimes;
 import org.apache.curator.utils.ZKPaths;
+import org.apdplat.counter.util.ConfUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,34 +26,38 @@ public class AtomicCounter {
     private static final String EXCEPTION_COUNT = Zookeeper.getCounterPrefix()+"/api_call_atomic_counter_zookeeper_exception";
     private static final String BEYOND_COUNT = Zookeeper.getCounterPrefix()+"/api_call_atomic_counter_zookeeper_beyond";
 
-    private static final ExecutorService EXECUTOR_SERVICE = Executors.newSingleThreadExecutor();
     private static final BlockingQueue<Counter> BLOCKING_QUEUE = new ArrayBlockingQueue<>(10000000);
 
     private static final RetryNTimes RETRY_N_TIMES = new RetryNTimes(10, 10);
     private static final CuratorFramework CURATOR_FRAMEWORK = Zookeeper.getCuratorFramework();
     private static final Map<String, DistributedAtomicLong> COUNTERS = new ConcurrentHashMap<>();
 
+    private static final boolean ASYNC = ConfUtils.getBoolean("async", false);
+
     static {
-        EXECUTOR_SERVICE.submit(()->{
-            while(true){
-                try{
-                    Counter counter = BLOCKING_QUEUE.take();
-                    if(counter != null){
-                        add(counter.getPath(), counter.getDelta());
-                    }
-                }catch (Throwable e){
-                    LOGGER.error("执行计数器出错", e);
-                }
-            }
-        });
+        if(ASYNC) {
+            Executors.newSingleThreadExecutor()
+                    .submit(() -> {
+                        while (true) {
+                            try {
+                                Counter counter = BLOCKING_QUEUE.take();
+                                if (counter != null) {
+                                    addInSync(counter.getPath(), counter.getDelta());
+                                }
+                            } catch (Throwable e) {
+                                LOGGER.error("执行计数器出错", e);
+                            }
+                        }
+                    });
+        }
     }
 
     public static void noResponse(long delta, String adType){
-        addInAsync(NO_RESPONSE_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
+        add(NO_RESPONSE_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
     }
 
     public static void wrongContent(long delta, String adType){
-        addInAsync(WRONG_CONTENT_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
+        add(WRONG_CONTENT_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
     }
 
     public static void responseSuccess(long delta, String adType){
@@ -60,21 +65,21 @@ public class AtomicCounter {
     }
 
     public static void responseSuccess(long delta, String adType, Integer productId, Integer tvId){
-        addInAsync(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
+        add(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
         if(productId != null){
-            addInAsync(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType+"_p_"+productId, delta);
+            add(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType+"_p_"+productId, delta);
         }
         if(tvId != null){
-            addInAsync(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType+"_t_"+tvId, delta);
+            add(RESPONSE_SUCCESS_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType+"_t_"+tvId, delta);
         }
     }
 
     public static void exception(long delta, String adType){
-        addInAsync(EXCEPTION_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
+        add(EXCEPTION_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
     }
 
     public static void beyond(long delta, String adType){
-        addInAsync(BEYOND_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
+        add(BEYOND_COUNT+"_"+new SimpleDateFormat("yyyyMMdd").format(new Date())+"_"+adType, delta);
     }
 
     public static long getNoResponseCount(String adType){
@@ -125,6 +130,14 @@ public class AtomicCounter {
         return getValue(BEYOND_COUNT+"_"+day+"_"+adType);
     }
 
+    private static void add(String path, long delta){
+        if(ASYNC){
+            addInAsync(path, delta);
+        }else{
+            addInSync(path, delta);
+        }
+    }
+
     private static void addInAsync(String path, long delta){
         try{
             BLOCKING_QUEUE.put(new Counter(path, delta));
@@ -133,7 +146,7 @@ public class AtomicCounter {
         }
     }
 
-    private static void add(String path, long delta){
+    private static void addInSync(String path, long delta){
         try {
             ZKPaths.mkdirs(CURATOR_FRAMEWORK.getZookeeperClient().getZooKeeper(), path);
             COUNTERS.putIfAbsent(path, new DistributedAtomicLong(CURATOR_FRAMEWORK, path, RETRY_N_TIMES));
@@ -143,7 +156,7 @@ public class AtomicCounter {
                 returnValue = counter.add(delta);
             }
         }catch (Exception e){
-            LOGGER.error("add "+delta+"failed for "+path, e);
+            LOGGER.error("addInSync "+delta+" failed for "+path, e);
         }
     }
 
@@ -174,6 +187,7 @@ public class AtomicCounter {
     public static void main(String[] args) throws Exception {
         String apiType = "1";
 
+        System.err.println("---------------------------------------------------------------");
         System.err.println("NoResponseCount: "+ AtomicCounter.getNoResponseCount(apiType));
         System.err.println("WrongContentCount: "+ AtomicCounter.getWrongContentCount(apiType));
         System.err.println("ExceptionCount: "+ AtomicCounter.getExceptionCount(apiType));
@@ -192,11 +206,12 @@ public class AtomicCounter {
             .start();
         }
         countDownLatch.await();
-
+        System.err.println("---------------------------------------------------------------");
         System.err.println("NoResponseCount: "+ AtomicCounter.getNoResponseCount(apiType));
         System.err.println("WrongContentCount: "+ AtomicCounter.getWrongContentCount(apiType));
         System.err.println("ExceptionCount: "+ AtomicCounter.getExceptionCount(apiType));
         System.err.println("ResponseSuccessCount: "+ AtomicCounter.getResponseSuccessCount(apiType));
         System.err.println("BeyondCount: "+ AtomicCounter.getBeyondCount(apiType));
+        System.err.println("---------------------------------------------------------------");
     }
 }
