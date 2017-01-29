@@ -44,3 +44,5 @@
         // 超过配额, 忽略调用请求
         AtomicCounter.beyond(1, apiType);
     }
+
+[https://travis-ci.org/ysc/counter](https://travis-ci.org/ysc/counter)
